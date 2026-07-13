@@ -14,12 +14,25 @@ import spark_dsg as dsg
 import spark_dsg.networkx as dsg_nx
 from spark_dsg._dsg_bindings import NodeSymbol, DynamicSceneGraph as DSG
 
-from openai import OpenAI
 from openai.types.chat.chat_completion import ChatCompletion
 
-client = OpenAI(
-    api_key=os.getenv("OPENAI_API_KEY"), organization=os.getenv("OPENAI_API_ORG")
-)
+# --- record/replay wrapper -------------------------------------------------
+# Was: client = OpenAI(api_key=..., organization=...)
+# CachingClient is a drop-in stand-in exposing the same
+# client.chat.completions.create(...) surface. Behaviour is controlled by env
+# vars (no code edits to switch modes):
+#   LLM_CACHE_MODE = record  -> calls the real OpenAI API and saves every
+#                               (request -> response) pair to LLM_CACHE_PATH
+#                               (needs OPENAI_API_KEY / OPENAI_API_ORG).
+#   LLM_CACHE_MODE = replay  -> answers from LLM_CACHE_PATH, no network, no key,
+#                               deterministic. An unrecorded request raises
+#                               CacheMiss (the divergence tripwire).
+#   LLM_CACHE_PATH = path to the cache file (default: llm_cache.json).
+# query_llm below is unchanged; its client.chat.completions.create(...) call
+# now goes through the wrapper.
+from lhmp.utils.llm_cache import CachingClient
+
+client = CachingClient()
 
 from lhmp.utils.dsg import Layers, get_closest_node, construct_places_layer_nx
 from lhmp.utils.language import join_to_sentence

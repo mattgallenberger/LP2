@@ -155,3 +155,6 @@ notebooks/
 # models:
 src/lhmp/baselines/trajectron-plus-plus/models/
 visualization/
+# macOS + project-specific
+.DS_Store
+llm_cache_*.json
