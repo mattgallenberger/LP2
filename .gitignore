@@ -158,3 +158,5 @@ visualization/
 # macOS + project-specific
 .DS_Store
 llm_cache_*.json
+# Baseline replay cache: kept in-repo so the baseline run is replayable (zero CacheMisses)
+!llm_cache_office.json

@@ -55,9 +55,17 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import time
 from typing import Any, Optional
 
+from openai import APIConnectionError, APITimeoutError, InternalServerError, RateLimitError
 from openai.types.chat.chat_completion import ChatCompletion
+
+# Transient OpenAI failures worth retrying during recording -- a network blip or a
+# rate limit shouldn't silently turn into a permanently missing cache entry.
+_TRANSIENT_ERRORS = (RateLimitError, APITimeoutError, APIConnectionError, InternalServerError)
+_MAX_RECORD_ATTEMPTS = 5
+_RECORD_BACKOFF_BASE_S = 2.0
 
 
 class CacheMiss(KeyError):
@@ -173,7 +181,19 @@ class CachingClient:
             return ChatCompletion.model_validate(entry["response"])
 
         # record mode: call the real API, save, return the genuine response.
-        response: ChatCompletion = self._real_client.chat.completions.create(**kwargs)
+        # Transient failures (rate limit, timeout, connection reset, server error) are
+        # retried with backoff so a flaky moment doesn't silently orphan this request
+        # from the cache -- a real bug we chased down a `CacheMiss` this way once.
+        attempt = 0
+        while True:
+            attempt += 1
+            try:
+                response: ChatCompletion = self._real_client.chat.completions.create(**kwargs)
+                break
+            except _TRANSIENT_ERRORS:
+                if attempt >= _MAX_RECORD_ATTEMPTS:
+                    raise
+                time.sleep(_RECORD_BACKOFF_BASE_S * (2 ** (attempt - 1)))
         self._store[key] = {
             # request kept only for human debugging; the key is derived from it.
             "request": {

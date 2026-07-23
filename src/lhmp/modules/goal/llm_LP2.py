@@ -30,7 +30,7 @@ from openai.types.chat.chat_completion import ChatCompletion
 #   LLM_CACHE_PATH = path to the cache file (default: llm_cache.json).
 # query_llm below is unchanged; its client.chat.completions.create(...) call
 # now goes through the wrapper.
-from lhmp.utils.llm_cache import CachingClient
+from lhmp.utils.llm_cache import CachingClient, CacheMiss
 
 client = CachingClient()
 
@@ -254,6 +254,8 @@ class LlmGoalModuleLP2(LlmGoalModule):
                     self.predict_goals_recursive(
                         graph_query, previous_interactions, node_id
                     )
+            except CacheMiss:
+                raise
             except Exception as e:
                 print("syntax error: ", e)
                 logging.error(f"syntax error: {e}\n retrying with error prompt.")
@@ -283,7 +285,7 @@ class LlmGoalModuleLP2(LlmGoalModule):
         _parent_id = parent_id
         pred_interactions = []
         while True:
-            if _parent_id is self.root_id:
+            if _parent_id == self.root_id:
                 break
             else:
                 node = self.interaction_sequences_semantics_tree.nodes[_parent_id]
@@ -447,7 +449,11 @@ class LlmGoalModuleLP2(LlmGoalModule):
         )
         return llm_result
 
-    def error_handler(self, llm_result: list[dict], prompt: str, response_content: str):
+    def error_handler(self, llm_result: list[dict], prompt: str, response_content: str, retries: int = 0):
+        MAX_RETRIES = 5
+        if retries >= MAX_RETRIES:
+            logging.warning(f"error_handler hit retry cap ({MAX_RETRIES}); accepting last result.")
+            return llm_result
         nonexisting_objects = []
         for pred in llm_result:
             if pred["object"] not in self.objects_by_semantic_class:
@@ -482,7 +488,7 @@ class LlmGoalModuleLP2(LlmGoalModule):
             )
             llm_result = self.postprocess_response(new_response)
             llm_result = self.error_handler(
-                llm_result, prompt, new_response.choices[0].message.content
+                llm_result, prompt, new_response.choices[0].message.content, retries + 1
             )
             return llm_result
 
@@ -773,6 +779,9 @@ class LlmGoalModuleLP2(LlmGoalModule):
             # if semantic_class == parent_semantic_class:
             #     continue
 
+            if semantic_class not in self.objects_by_semantic_class:
+                logging.warning(f"skipping invalid predicted object '{semantic_class}' (not in scene graph)")
+                continue
             object_instances = self.objects_by_semantic_class[semantic_class].copy()
             object_instances = self.compute_instance_probabilities(
                 nearest_previous_places_node, object_instances, probability_semantic

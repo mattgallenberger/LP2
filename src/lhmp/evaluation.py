@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 from scipy.stats import gaussian_kde
 from typing import Optional
 import math
+import logging
 
 from sklearn.neighbors import KernelDensity
 from scipy.interpolate import interp1d
@@ -308,6 +309,8 @@ class Evaluation:
                 )
             accs.append(np.mean(path_accs))
 
+        if len(accs) == 0:
+            return 0.0
         return np.max(accs)
 
     def trajectory_accuracy_single_threshold(
@@ -533,10 +536,23 @@ class Evaluation:
                 acc_cumulative = acc_cumulative_new
                 best_path = path
 
+        times = round(gt_trajectory_reindexed["t"] - t0, 5)
+
+        if best_path is None:
+            logging.warning(
+                "room_prediction_accuracy_BoN: no candidate path had any "
+                "ground-truth timestep within the prediction horizon (or no "
+                "candidate paths were predicted at all); returning a NaN-filled result."
+            )
+            nan_col = np.full(len(times), np.nan)
+            return pd.DataFrame(
+                np.c_[[nan_col, times, times <= prediction_horizon]].T,
+                columns=["acc", "t", "t_pred"],
+            )
+
         accs_cumulative = np.cumsum(
             best_path["room_id"] == gt_trajectory_reindexed["room_id"]
         ) / np.arange(1, len(best_path) + 1)
-        times = round(gt_trajectory_reindexed["t"] - t0, 5)
 
         return pd.DataFrame(
             np.c_[[accs_cumulative, times, times <= prediction_horizon]].T,
@@ -580,6 +596,18 @@ class Evaluation:
                 distances = distances_path
                 fde_at_t = distances_path
 
+        if len(distances) == 0:
+            logging.warning(
+                "sequence_prediction_ADE_FDE_BoN: no candidate path had any "
+                "ground-truth timestep within the prediction horizon (or no "
+                "candidate paths were predicted at all); returning a NaN-filled result."
+            )
+            nan_col = np.full(len(times), np.nan)
+            return pd.DataFrame(
+                np.c_[[nan_col, nan_col, times, times <= prediction_horizon]].T,
+                columns=["ade", "fde", "t", "t_pred"],
+            )
+
         ade_at_t = np.cumsum(distances) / np.arange(1, len(distances) + 1)
 
         if len(ade_at_t) <= 60:
@@ -616,9 +644,10 @@ class Evaluation:
                 predictions_at_n = [
                     {
                         key: getattr(i.goals[n + 1], key),
-                        "probability": np.product([j.probability for j in i.goals]),
+                        "probability": np.prod([j.probability for j in i.goals]),
                     }
                     for i in predicted_interaction_sequences.sequences
+                    if len(i.goals) > n + 1
                 ]
                 unique_predictions = [
                     int(j) if key == "id" else str(j)
@@ -688,7 +717,7 @@ class Evaluation:
         probability = 0.0
 
         for prediction in goal_sequences:  # edit
-            if len(prediction.goals) < n:
+            if len(prediction.goals) <= n + 1:
                 continue
             if getattr(prediction.goals[n + 1], key) == gt_at_n:
                 probability += prediction.probability

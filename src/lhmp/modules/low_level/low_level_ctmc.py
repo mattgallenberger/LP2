@@ -217,6 +217,10 @@ class LowLevelCTMC(LowLevelModuleBase):
         paths_interpolated = SmoothPaths()
         for path_idx, path in enumerate(coarse_paths):
 
+            if len(path.path) == 0:
+                logging.warning("skipping empty coarse path (all predictions were invalid)")
+                continue
+
             if self.use_diverse_sampling:
                 first_seg = tuple(path.path[0])
                 if first_seg in diverse_sampling_lookups:
